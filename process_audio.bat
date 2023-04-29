@@ -1,4 +1,4 @@
 
 @echo off
 
-..\tools\midi_to_odin.exe assets\Ur_Opening.mid > source\assets\audio.odin
+..\tools\midi_to_odin.exe assets\Ur_Opening2.mid > source\assets\audio.odin

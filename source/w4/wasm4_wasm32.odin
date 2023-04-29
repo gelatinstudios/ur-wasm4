@@ -122,7 +122,7 @@ Tone_Pan :: enum u32 {
 
 Tone_Duration :: struct {
 	attack:  u8, // in frames
-	delay:   u8, // in frames
+	decay:   u8, // in frames
 	release: u8, // in frames
 	sustain: u8, // in frames
 }
@@ -143,7 +143,7 @@ tone :: proc "c" (frequency: u32, duration: u32, volume_percent: u32, channel: T
 tone_complex :: proc "c" (start_frequency, end_frequency: u16, duration: Tone_Duration, volume_percent: u32, channel: Tone_Channel, duty_cycle := Tone_Duty_Cycle.Eigth, pan := Tone_Pan.Center) {
 	flags := u32(channel) | u32(duty_cycle) | u32(pan)
 	frequency := u32(start_frequency) | u32(end_frequency)<<16
-	duration_in_frames := u32(duration.attack)<<24 | u32(duration.delay)<<16 | u32(duration.release)<<8 | u32(duration.sustain)
+	duration_in_frames := u32(duration.attack)<<24 | u32(duration.decay)<<16 | u32(duration.release)<<8 | u32(duration.sustain)
 	
 	internal_tone(frequency, duration_in_frames, volume_percent, flags)
 }

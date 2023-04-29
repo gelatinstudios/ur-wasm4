@@ -5,7 +5,7 @@ import "w4"
 import "assets"
 
 global_audio_engine: struct {
-    block_indices: [3]int,
+    block_indices: [4]int,
 }
 
 menu_music_frame_start :: 30
@@ -36,9 +36,11 @@ do_sounds :: proc "contextless" (game: Game_State) {
 
     switch game.state {
     case .Menu:
-	indices := cast([^]int)(&global_audio_engine.block_indices)
+	indices := global_audio_engine.block_indices[:]
+	params := [4]assets.Audio_Params{}
 	tick := game.state_frame_count - menu_music_frame_start
-	play_Ur_Opening(indices, tick)
+	
+	play_Ur_Opening2(indices, params[:], tick, true)
 
     case .Roll_Prompt: // do nothing
 	
