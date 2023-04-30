@@ -52,6 +52,9 @@ do_sounds :: proc "contextless" (game: Game_State) {
 	
     case .Move_Prompt:
     case .Done:
+	indices := global_audio_engine.block_indices[:]
+	params := [4]assets.Audio_Params{}
+	play_Ur_Ending(indices, params[:], game.state_frame_count, false)
     }
 
     

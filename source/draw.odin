@@ -4,12 +4,14 @@ package wasm4_ur
 import "w4"
 import "assets"
 
+import "core:math"
+
 player1_info_x :i32 : 1
 player2_info_x :i32 : 112
 
 board_x :: 50
 
-tile_pos :: proc "contextless" (game: Game_State, id: Player_ID, index: int) -> (i32, i32) {
+get_tile_pos :: proc "contextless" (game: Game_State, id: Player_ID, index: int) -> (i32, i32) {
     tile_tab := [?][2]i32 {
 	{0, 4}, {0, 3}, {0, 2}, {0, 1}, {0, 0}, {1, 0}, {1, 1}, {1, 2},
 	{1, 3}, {1, 4}, {1, 5}, {1, 6}, {1, 7}, {0, 7}, {0, 6}, {0, 5},
@@ -228,55 +230,67 @@ draw_player_text :: proc "contextless" (text: string, id: Player_ID, y: i32, x_o
     w4.text(text, x, y)
 }
 
-draw_game :: proc "contextless" (game: Game_State) {
+get_info_piece_positions :: proc "contextless" (game: Game_State, id: Player_ID) -> [][2]i32 {
+    @static positions: [7][2]i32
+    player_index := int(id)
+    using player := game.players[player_index]
+        
+    info_pieces_offsets := [?][2]i32 {
+	{ 0,  0},
+	{12,  0},
+	{24,  0},
+	{36,  0},
+	{ 6, 10},
+	{18, 10},
+	{30, 10},
+	{42, 10},
+    }
+
+    effective_available_pieces := available_pieces
+
+    if (game.state == .Move_Prompt) &&
+	id == game.active_player &&
+	game.selected_tile == 0
+    {
+	effective_available_pieces -= 1
+    }
+    
+    piece_counts := [?]int{effective_available_pieces, finished_pieces}
+    y_offsets    := [?]i32{12,              6*20 + 18}
+
+    index := 0
+    for piece_count, i in piece_counts {
+	x_offset := id == .One ? player1_info_x : player2_info_x
+	y_offset := y_offsets[i]
+	for i in 0 ..< piece_count {
+	    pos := info_pieces_offsets[i]
+
+	    pos.x += x_offset + 2
+	    pos.y += y_offset
+
+	    positions[index] = pos
+	    index += 1
+	}
+    }
+
+    return positions[:index]
+}
+
+draw_game :: proc "contextless" (game: ^Game_State) {
     state := game.state
     active_player := game.active_player
     
     if state >= .Roll_Prompt {
-	draw_board(game)
+	draw_board(game^)
 
 	player_names := [?]string {"  P1", "  P2"}
 	
 	for i in 0..=1 {
-	    using player := game.players[i]
 	    id := Player_ID(i)
-	    
 	    draw_player_text(player_names[i], id, 2, 2)
-	    
-	    info_pieces_offsets := [?][2]i32 {
-		{ 0,  0},
-		{12,  0},
-		{24,  0},
-		{36,  0},
-		{ 6, 10},
-		{18, 10},
-		{30, 10},
-		{42, 10},
-	    }
-
-	    effective_available_pieces := available_pieces
-
-	    if (state == .Move_Prompt) &&
-		id == active_player &&
-		game.selected_tile == 0
-	    {
-		effective_available_pieces -= 1
-	    }
-	    
-	    piece_counts := [?]int{effective_available_pieces, finished_pieces}
-	    y_offsets    := [?]i32{12,              6*20 + 18}
-
-	    for piece_count, i in piece_counts {
-		x_offset := id == .One ? player1_info_x : player2_info_x
-		y_offset := y_offsets[i]
-		for i in 0 ..< piece_count {
-		    pos := info_pieces_offsets[i]
-
-		    pos.x += x_offset + 2
-		    pos.y += y_offset
-
-		    draw_piece(id, pos.x, pos.y, true)
-		}
+	    positions := get_info_piece_positions(game^, id)
+	    for position in positions {
+		draw_piece(id, position.x, position.y, true)
 	    }
 	}
     }
@@ -318,7 +332,7 @@ draw_game :: proc "contextless" (game: Game_State) {
 	draw_dice(game.dice, active_player)
 	draw_player_text(" MOVE", active_player, 70)
 
-	x, y := tile_pos(game, active_player, game.selected_tile)
+	x, y := get_tile_pos(game^, active_player, game.selected_tile)
 
 	if active_player == .One {
 	    w4.DRAW_COLORS^ = 0x20
@@ -333,7 +347,7 @@ draw_game :: proc "contextless" (game: Game_State) {
 	should_draw := n < oscillation_length
 
 	if should_draw {
-	    x, y = tile_pos(game, active_player, game.selected_tile + game.roll)
+	    x, y = get_tile_pos(game^, active_player, game.selected_tile + game.roll)
 
 	    x += 1
 	    y += 1
@@ -342,5 +356,63 @@ draw_game :: proc "contextless" (game: Game_State) {
 	}
 	
     case .Done:
+	for y in 0..<w4.SCREEN_SIZE {
+	    for x in 0..<w4.SCREEN_SIZE {
+		index := u32(x + y*w4.SCREEN_SIZE)
+		if get_bit(&game.end_screen_has_sprite, index) {
+		    is_info := get_bit(&game.end_screen_is_info, index)
+		    player_id := Player_ID(get_bit(&game.end_screen_player_id, index))
+		    draw_piece(player_id, i32(x), i32(y), is_info)
+		}
+	    }
+	}
+
+	frames_to_oscillate_for :: 120
+
+	should_draw := true
+	if game.state_frame_count < frames_to_oscillate_for {
+	    oscillation_length :: 10
+	    n := game.state_frame_count % (oscillation_length*2)
+	    should_draw = n < oscillation_length
+	}
+
+	// TODO: this is all pretty sloppily hacked together
+	//       could be cleaned up...
+	
+	if should_draw {
+	    w4.DRAW_COLORS^ = 0x21
+	    width  :u32 = 80
+	    height :u32 = 20
+	    
+	    x := i32(w4.SCREEN_SIZE/2 - width/2)
+	    y := i32(w4.SCREEN_SIZE/2 - height/2) - w4.SCREEN_SIZE/4
+	    w4.rect(x, y - 5, width, height)
+
+	    y += 1
+	    
+	    if game.player_that_won == .One {
+		w4.DRAW_COLORS^ = 0x3
+		w4.text(" P1 Wins!", x, y)
+	    } else {
+		w4.DRAW_COLORS^ = 0x4
+		w4.text(" P2 Wins!", x, y)
+	    }
+	}
+
+	if game.state_frame_count >= frames_to_oscillate_for {
+	    text :: "X to Restart"
+	    width :: len(text)*8 + 2
+	    
+	    w4.DRAW_COLORS^ = 0x21
+	    w4.rect(w4.SCREEN_SIZE/2 - width/2, w4.SCREEN_SIZE/2 + 10 - w4.SCREEN_SIZE/4, width, 12)
+
+	    if game.player_that_won == .One {
+		w4.DRAW_COLORS^ = 0x3
+	    } else {
+		w4.DRAW_COLORS^ = 0x4
+	    }
+	    
+	    w4.text(text, w4.SCREEN_SIZE/2 - width/2 +2, w4.SCREEN_SIZE/2 + 13 - w4.SCREEN_SIZE/4)
+	}
     }
 }

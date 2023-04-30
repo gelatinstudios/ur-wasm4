@@ -3,6 +3,7 @@ package wasm4_ur
 
 import "w4"
 import "assets"
+import "math"
 
 frames_to_roll_for :: 60
 frames_to_pause_after_roll_for :: 20
@@ -15,7 +16,7 @@ Player :: struct {
     finished_pieces: int,
 }
 
-Player_ID :: enum {
+Player_ID :: enum u8 {
     One = 0,
     Two = 1,
 }
@@ -48,6 +49,17 @@ Move_Type :: enum {
     Finish_Line,
 }
 
+End_Screen_Sprite :: struct #packed {
+    x, y: i16,
+    player: Player_ID,
+    dx, dy: i16,
+    angle: i16,
+    angle_delta: i16,
+    is_info: b8,
+}
+
+SCREEN_BIT_ARRAY :: w4.SCREEN_SIZE*w4.SCREEN_SIZE/8
+
 Game_State :: struct {
     state: State,
 
@@ -66,6 +78,39 @@ Game_State :: struct {
     selected_tile: int,
     move_type: Move_Type,
     player_that_moved: Player_ID,
+
+    player_that_won: Player_ID,
+    end_screen_sprites: [14]End_Screen_Sprite
+
+    // 160*160 bit arrays
+    end_screen_has_sprite: [SCREEN_BIT_ARRAY]byte,
+    end_screen_player_id:  [SCREEN_BIT_ARRAY]byte,
+    end_screen_is_info:    [SCREEN_BIT_ARRAY]byte,
+}
+
+get_bit :: proc "contextless" (arr: ^[SCREEN_BIT_ARRAY]byte, index: u32) -> bool {
+    b := arr[index/8]
+    b >>= index % 8
+    return bool(b & 1)
+}
+
+set_bit :: proc "contextless" (arr: ^[SCREEN_BIT_ARRAY]byte, index: u32, n: bool) {
+    n := u8(n)
+    shift := index % 8
+    b := &arr[index/8]
+    b^ = (b^ & ~(1<<shift)) | (n << shift)
+}
+
+// NOTE: this is for testing the end screen only
+fake_end_game :: proc "contextless" (using game: ^Game_State) {
+    switch_state(game, .Done)
+    players[0].available_pieces = 0
+    players[0].finished_pieces = 7
+    players[1].available_pieces = 1
+    players[1].finished_pieces = 5
+    board[len(board)/2] = {.Two}
+    active_player = .One
+    player_that_won = .One
 }
 
 is_rosette_tab: [board_length]bool
@@ -73,11 +118,18 @@ is_rosette_tab: [board_length]bool
 global_rng_state: u64
 global_game_state: Game_State
 
+get_end_screen_circle_deltas :: proc "contextless" (angle: i16) -> (f32, f32) {
+    END_SCREEN_RADIUS :: 10
+    using math
+    
+    return END_SCREEN_RADIUS*cos(angle), END_SCREEN_RADIUS*sin(angle)
+}
+
 switch_state :: proc "contextless" (game: ^Game_State, state: State) {
     game.state = state
     game.state_frame_count = -1 // because 1 is always added to it at the end of the update function
 
-    if state == .Menu {
+    if state == .Menu || state == .Done {
         global_audio_engine = {}
     }
 }
@@ -207,6 +259,77 @@ reset_game :: proc "contextless" (game: ^Game_State) {
     global_rng_state = {}
 }
 
+initialize_end_screen :: proc "contextless" (game: ^Game_State) {
+    using game
+
+    player_that_won = active_player
+    
+    init_end_screen_sprite :: proc "contextless" (sprite: ^End_Screen_Sprite,
+						  x, y: i16, id: Player_ID, is_info: b8) {
+	angle := pcg32() % 360
+	x := x
+	y := y
+	
+	using math
+
+	if x < w4.SCREEN_SIZE/2 {
+	    sprite.dx = 1
+	} else {
+	    sprite.dx = -1
+	}
+
+	if y < w4.SCREEN_SIZE/2 {
+	    sprite.dy = 1
+	} else {
+	    sprite.dy = -1
+	}
+	
+	dx, dy := get_end_screen_circle_deltas(i16((angle + 180) % 360))
+	x += i16(dx)
+	y += i16(dy)
+
+	sprite.x = x
+	sprite.y = y
+	sprite.player = id
+	sprite.angle = i16(angle)
+	sprite.angle_delta = i16(pcg32() % 15 + 5)
+	sprite.is_info = is_info
+    }
+
+    end_screen_sprite_index := 0
+    
+    ids := [2]Player_ID { active_player, other_player(active_player) }
+    for id in ids {
+	for tile, i in board {
+	    if id in tile {
+		sprite := &game.end_screen_sprites[end_screen_sprite_index]
+		end_screen_sprite_index += 1
+		
+		x, y := get_tile_pos(game^, id, i)
+		init_end_screen_sprite(sprite, i16(x), i16(y), id, false)
+	    }
+	}
+	for pos in get_info_piece_positions(game^, id) {
+	    sprite := &game.end_screen_sprites[end_screen_sprite_index]
+	    end_screen_sprite_index += 1
+
+	    init_end_screen_sprite(sprite, i16(pos.x), i16(pos.y), id, true)
+	}
+    }
+
+    fisher_yattes_shuffle :: proc "contextless" (sprites: []End_Screen_Sprite) {
+	n := len(sprites)
+	for i := n-1; i >= 1; i -= 1 {
+	    j := uint(pcg32()) % uint(i)
+	    tmp := sprites[i]
+	    sprites[i] = sprites[j]
+	    sprites[j] = tmp
+	}
+    }
+
+    fisher_yattes_shuffle(game.end_screen_sprites[1:])
+}
+
 update_game :: proc "contextless" (game: ^Game_State) {
     game := game
     state := game.state
@@ -222,11 +345,6 @@ update_game :: proc "contextless" (game: ^Game_State) {
 
     switch state {
     case .Menu:
-        if .A in pressed_this_frame {
-            switch_state(game, .Menu_Rolling)
-            pcg32_init(game.frame_count)
-        }
-
         using assets
         
         // making the dice at the beginning dance
@@ -261,6 +379,13 @@ update_game :: proc "contextless" (game: ^Game_State) {
             for die, i in &game.dice {
                 die = (int(game.frame_count) / 60 + i) % 6
             }
+        }
+
+	if .A in pressed_this_frame {
+            switch_state(game, .Menu_Rolling)
+            pcg32_init(game.frame_count)
+
+	    //fake_end_game(game) // TODO: remove!!!
         }
         
     case .Menu_Rolling:
@@ -338,6 +463,7 @@ update_game :: proc "contextless" (game: ^Game_State) {
 
             if player.finished_pieces == 7 {
                 switch_state(game, .Done)
+		game.player_that_won = game.active_player
             } else if is_rosette_tab[to] {
                 game.move_type = .Rosette
                 switch_state(game, .Roll_Prompt)
@@ -347,9 +473,36 @@ update_game :: proc "contextless" (game: ^Game_State) {
         }
         
     case .Done:
-        if .A in pressed_this_frame {
-            reset_game(game)
-        }
+	if game.state_frame_count == 0 {
+	    initialize_end_screen(game)
+	} else {
+	    tick := game.state_frame_count - 1
+	    moving_sprite_count := min(tick/60+1, len(game.end_screen_sprites))
+	    moving_sprites := game.end_screen_sprites[:moving_sprite_count]
+	    for sprite in &moving_sprites {
+		dx, dy := get_end_screen_circle_deltas(sprite.angle)
+		x := sprite.x + i16(dx)
+		y := sprite.y + i16(dy)
+		
+		if x >= 0 && x < w4.SCREEN_SIZE && y >= 0 && y < w4.SCREEN_SIZE {
+		    index := u32(x) + u32(y)*w4.SCREEN_SIZE
+		    set_bit(&game.end_screen_has_sprite, index, true)
+		    set_bit(&game.end_screen_is_info, index, bool(sprite.is_info))
+		    set_bit(&game.end_screen_player_id, index, bool(sprite.player))
+		}
+		
+		ANGLE_DELTA :: 1
+		
+		sprite.x += sprite.dx
+		sprite.y += sprite.dy
+		sprite.angle += sprite.angle_delta
+		sprite.angle %= 360
+	    }
+
+	    if game.state_frame_count >= 120 && .A in pressed_this_frame {
+		reset_game(game)
+            }
+	}
     }
 }
 
@@ -359,7 +512,7 @@ update :: proc "c" () {
     
     update_game(game)
     do_sounds(game^)
-    draw_game(game^)
+    draw_game(game)
 
     game.state_frame_count += 1
     game.frame_count += 1
