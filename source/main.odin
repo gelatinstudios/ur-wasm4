@@ -1,4 +1,3 @@
-
 package wasm4_ur
 
 import "w4"
@@ -32,6 +31,8 @@ in_war_region :: proc "contextless" (index: int) -> bool {
 
 State :: enum {
     Menu = 1,
+    Tutorial,
+    Players_Ready_Up,
     Menu_Rolling,
     Roll_Prompt,
     Rolling,
@@ -60,6 +61,12 @@ End_Screen_Sprite :: struct #packed {
 
 SCREEN_BIT_ARRAY :: w4.SCREEN_SIZE*w4.SCREEN_SIZE/8
 
+Menu_Selection :: enum {
+    One_Player_Start,
+    Two_Player_Start,
+    How_To_Play,
+}
+
 Game_State :: struct {
     state: State,
 
@@ -72,9 +79,14 @@ Game_State :: struct {
     players: [2]Player,
     active_player: Player_ID,
 
+    player_2_is_ai: bool,
+    
     dice: [4]int,
     roll: int,
 
+    menu_selection: Menu_Selection,
+    player_1_ready, player_2_ready: bool,
+    
     selected_tile: int,
     move_type: Move_Type,
     player_that_moved: Player_ID,
@@ -185,7 +197,6 @@ is_valid_selection :: proc "contextless" (game: Game_State, id: Player_ID, s: in
         return false
     }
     
-    from := s
     to := s + game.roll
 
     result := false
@@ -338,171 +349,232 @@ update_game :: proc "contextless" (game: ^Game_State) {
     pad1 := w4.GAMEPAD1^
     pad2 := w4.GAMEPAD2^
         
-    active_pad := active_player == .One ? pad1 : pad2
-    pressed_this_frame := active_pad - game.pads_last_frame[int(active_player)]
+    pad1_pressed_this_frame :=  pad1 - game.pads_last_frame[0]
+    pad2_pressed_this_frame :=  pad2 - game.pads_last_frame[0]
 
+    pressed_this_frame := active_player == .One ? pad1_pressed_this_frame : pad2_pressed_this_frame
+    
     game.move_type = .No_Move
 
+    is_ai_turn := game.player_2_is_ai && active_player == .Two
+    
+    if is_ai_turn {
+        pressed_this_frame = {}
+    }
+
+    player_id := active_player
+    player := &game.players[player_id]
+    enemy_id := other_player(player_id)
+    enemy := &game.players[enemy_id]
+    
     switch state {
-    case .Menu:
-        using assets
-        
-        // making the dice at the beginning dance
-
-        tick_die :: proc "contextless" (die: ^int) {
-            die^ = (die^ + 1) % 6
-        }
-
-        // it's dumb that i have to declare this but whatever
-        tracks := [?][]Audio_Block {
-            Ur_Opening2_Pulse1[:],
-            Ur_Opening2_Pulse2[:],
-            Ur_Opening2_Triangle[:],
-            Ur_Opening2_Noise[:],
-        }
-        song_is_playing := false
-        for track, i in tracks {
-            index := global_audio_engine.block_indices[i]
+        case .Menu:
+            using assets
             
-            if index < len(track) {
-                song_is_playing = true
-                block := track[index]
-                tick := game.state_frame_count - menu_music_frame_start
-                tick %= get_song_tick_length(tracks[:])
-                if tick == i64(block.start_frame) {
-                    die_index_tab := [?]int{0, 3, 1, 2}
-                    tick_die(&game.dice[die_index_tab[i]])
+            // making the dice at the beginning dance
+
+            tick_die :: proc "contextless" (die: ^int) {
+                die^ = (die^ + 1) % 6
+            }
+
+            // it's dumb that i have to declare this but whatever
+            tracks := [?][]Audio_Block {
+                Ur_Opening2_Pulse1[:],
+                Ur_Opening2_Pulse2[:],
+                Ur_Opening2_Triangle[:],
+                Ur_Opening2_Noise[:],
+            }
+            song_is_playing := false
+            for track, i in tracks {
+                index := global_audio_engine.block_indices[i]
+                
+                if index < len(track) {
+                    song_is_playing = true
+                    block := track[index]
+                    tick := game.state_frame_count - menu_music_frame_start
+                    tick %= get_song_tick_length(tracks[:])
+                    if tick == i64(block.start_frame) {
+                        die_index_tab := [?]int{0, 3, 1, 2}
+                        tick_die(&game.dice[die_index_tab[i]])
+                    }
                 }
             }
-        }
-        if !song_is_playing {
-            for die, i in &game.dice {
-                die = (int(game.frame_count) / 60 + i) % 6
+            if !song_is_playing {
+                for die, i in &game.dice {
+                    die = (int(game.frame_count) / 60 + i) % 6
+                }
             }
-        }
-
-	if .A in pressed_this_frame {
-            switch_state(game, .Menu_Rolling)
-            pcg32_init(game.frame_count)
-
-	    //fake_end_game(game) // TODO: remove!!!
-        }
-        
-    case .Menu_Rolling:
-        if game.state_frame_count < frames_to_roll_for {
-            roll(game)
-        } else {
-            switch_state(game, .Roll_Prompt)
-        }
-                
-    case .Roll_Prompt:
-        if .A in pressed_this_frame {
-            switch_state(game, .Rolling)
-        }
-        
-    case .Rolling:
-        if game.state_frame_count < frames_to_roll_for {
-            roll(game)
-        }
-
-        if game.state_frame_count >= total_rolling_frames {
-            game.selected_tile = 0
             
-            switch_state(game, .Move_Prompt)
-            s, ok := find_valid_selection(game^, active_player)
-            if !ok {
-                // TODO: tell the user there's no available moves??
-                next_turn(game)
+            game.menu_selection += Menu_Selection(.DOWN in pressed_this_frame)
+            game.menu_selection -= Menu_Selection(.UP in pressed_this_frame)
+            game.menu_selection = clamp(game.menu_selection, min(Menu_Selection), max(Menu_Selection))
+            
+	    if .A in pressed_this_frame do switch game.menu_selection {
+                case .One_Player_Start:
+                    game.player_2_is_ai = true
+                    switch_state(game, .Menu_Rolling)
+                    pcg32_init(game.frame_count)
+
+                case .Two_Player_Start:
+                    switch_state(game, .Players_Ready_Up)
+
+                case .How_To_Play:
+                    switch_state(game, .Tutorial)
+            }
+
+        case .Tutorial:
+            
+            
+        case .Players_Ready_Up:
+            if .A in pad1_pressed_this_frame {
+                game.player_1_ready = !game.player_1_ready
+            }
+            if .A in pad2_pressed_this_frame {
+                game.player_2_ready = !game.player_2_ready
+            }
+            if game.player_1_ready && game.player_2_ready {
+                switch_state(game, .Menu_Rolling)
+                pcg32_init(game.frame_count)
+            }
+            
+        case .Menu_Rolling:
+            if game.state_frame_count < frames_to_roll_for {
+                roll(game)
             } else {
-                game.selected_tile = s
-            }
-        }
-
-    case .Move_Prompt:
-        if .UP in pressed_this_frame {
-            next_valid_selection(game, active_player, 1)
-        }
-        
-        if .DOWN in pressed_this_frame {
-            next_valid_selection(game, active_player, -1)
-        }
-        
-        if .A in pressed_this_frame {
-            game.move_type = .Normal
-            
-            player_id := active_player
-            player := &game.players[player_id]
-            enemy_id := other_player(player_id)
-            enemy := &game.players[enemy_id]
-            
-            game.player_that_moved = player_id
-                
-            from := game.selected_tile
-            to := from + game.roll
-
-            from_tile := &game.board[from]
-            to_tile   := &game.board[to]
-            
-            from_tile^ -= {active_player}
-            if in_war_region(to) && enemy_id in to_tile^ {
-                to_tile^ = nil
-                enemy.available_pieces += 1
-                game.move_type = .Kill
-            }
-            to_tile^ += {active_player}
-
-            game.board[board_length-1] = nil
-            
-            if from == 0 {
-                player.available_pieces -= 1
-            }
-            if to == board_length-1 {
-                game.move_type = .Finish_Line
-                player.finished_pieces += 1
-            }
-
-            if player.finished_pieces == 7 {
-                switch_state(game, .Done)
-		game.player_that_won = game.active_player
-            } else if is_rosette_tab[to] {
-                game.move_type = .Rosette
                 switch_state(game, .Roll_Prompt)
-            } else {
-                next_turn(game)
             }
-        }
-        
-    case .Done:
-	if game.state_frame_count == 0 {
-	    initialize_end_screen(game)
-	} else {
-	    tick := game.state_frame_count - 1
-	    moving_sprite_count := min(tick/60+1, len(game.end_screen_sprites))
-	    moving_sprites := game.end_screen_sprites[:moving_sprite_count]
-	    for sprite in &moving_sprites {
-		dx, dy := get_end_screen_circle_deltas(sprite.angle)
-		x := sprite.x + i16(dx)
-		y := sprite.y + i16(dy)
-		
-		if x >= 0 && x < w4.SCREEN_SIZE && y >= 0 && y < w4.SCREEN_SIZE {
-		    index := u32(x) + u32(y)*w4.SCREEN_SIZE
-		    set_bit(&game.end_screen_has_sprite, index, true)
-		    set_bit(&game.end_screen_is_info, index, bool(sprite.is_info))
-		    set_bit(&game.end_screen_player_id, index, bool(sprite.player))
-		}
-		
-		ANGLE_DELTA :: 1
-		
-		sprite.x += sprite.dx
-		sprite.y += sprite.dy
-		sprite.angle += sprite.angle_delta
-		sprite.angle %= 360
-	    }
+            
+        case .Roll_Prompt:
+            if .A in pressed_this_frame || is_ai_turn {
+                switch_state(game, .Rolling)
+            }
+            
+        case .Rolling:
+            if game.state_frame_count < frames_to_roll_for {
+                roll(game)
+            }
 
-	    if game.state_frame_count >= 120 && .A in pressed_this_frame {
-		reset_game(game)
+            if game.state_frame_count >= total_rolling_frames {
+                game.selected_tile = 0
+                
+                switch_state(game, .Move_Prompt)
+                s, ok := find_valid_selection(game^, active_player)
+                if !ok {
+                    // TODO: tell the user there's no available moves??
+                    next_turn(game)
+                } else {
+                    game.selected_tile = s
+                }
             }
-	}
+
+        case .Move_Prompt:
+            if is_ai_turn { // here is the AI
+                Heuristic :: proc "contextless" (game: Game_State, selection: int) -> bool
+                heuristics := [?]Heuristic {
+                    proc "contextless" (game: Game_State, to: int) -> bool { return is_rosette_tab[to] },
+                    proc "contextless" (game: Game_State, to: int) -> bool { return in_war_region(to) && other_player(game.active_player) in game.board[to] },
+                    proc "contextless" (game: Game_State, to: int) -> bool { return !in_war_region(to) },
+                }
+
+                selection := -1 // using a Maybe(int) here added 4KB of code so i'm just doing this
+                heuristic_loop: for heuristic in heuristics {
+                    for i := len(game.board)-1; i >= 0; i -= 1 {
+                        if !is_valid_selection(game^, active_player, i) do continue
+                        if heuristic(game^, i + game.roll) {
+                            selection = i
+                            break heuristic_loop
+                        }
+                    }
+                }
+                
+                if selection != -1 {
+                    game.selected_tile = selection
+                } else {
+                    for _ in 0 ..< pcg32() % 10 {
+                        next_valid_selection(game, active_player, 1)
+                    }
+                }
+            }
+
+            if .UP in pressed_this_frame {
+                next_valid_selection(game, active_player, 1)
+            }
+            
+            if .DOWN in pressed_this_frame {
+                next_valid_selection(game, active_player, -1)
+            }
+            
+            if .A in pressed_this_frame || is_ai_turn {
+                game.move_type = .Normal
+                                
+                game.player_that_moved = player_id
+                
+                from := game.selected_tile
+                to := from + game.roll
+
+                from_tile := &game.board[from]
+                to_tile   := &game.board[to]
+                
+                from_tile^ -= {active_player}
+                if in_war_region(to) && enemy_id in to_tile^ {
+                    to_tile^ = nil
+                    enemy.available_pieces += 1
+                    game.move_type = .Kill
+                }
+                to_tile^ += {active_player}
+
+                game.board[board_length-1] = nil
+                
+                if from == 0 {
+                    player.available_pieces -= 1
+                }
+                if to == board_length-1 {
+                    game.move_type = .Finish_Line
+                    player.finished_pieces += 1
+                }
+
+                if player.finished_pieces == 7 {
+                    switch_state(game, .Done)
+		    game.player_that_won = game.active_player
+                } else if is_rosette_tab[to] {
+                    game.move_type = .Rosette
+                    switch_state(game, .Roll_Prompt)
+                } else {
+                    next_turn(game)
+                }
+            }
+            
+        case .Done:
+	    if game.state_frame_count == 0 {
+	        initialize_end_screen(game)
+	    } else {
+	        tick := game.state_frame_count - 1
+	        moving_sprite_count := min(tick/60+1, len(game.end_screen_sprites))
+	        moving_sprites := game.end_screen_sprites[:moving_sprite_count]
+	        for sprite in &moving_sprites {
+		    dx, dy := get_end_screen_circle_deltas(sprite.angle)
+		    x := sprite.x + i16(dx)
+		    y := sprite.y + i16(dy)
+		    
+		    if x >= 0 && x < w4.SCREEN_SIZE && y >= 0 && y < w4.SCREEN_SIZE {
+		        index := u32(x) + u32(y)*w4.SCREEN_SIZE
+		        set_bit(&game.end_screen_has_sprite, index, true)
+		        set_bit(&game.end_screen_is_info, index, bool(sprite.is_info))
+		        set_bit(&game.end_screen_player_id, index, bool(sprite.player))
+		    }
+		    
+		    ANGLE_DELTA :: 1
+		    
+		    sprite.x += sprite.dx
+		    sprite.y += sprite.dy
+		    sprite.angle += sprite.angle_delta
+		    sprite.angle %= 360
+	        }
+
+	        if game.state_frame_count >= 120 && .A in pressed_this_frame {
+		    reset_game(game)
+                }
+	    }
     }
 }
 

@@ -26,7 +26,8 @@ get_song_tick_length :: proc "contextless" (tracks: [][]Audio_Block) -> i64 {
 }
 
 play_track :: proc "contextless" (tracks: [][]Audio_Block, indices: []int, params: []Audio_Params, tick: i64, loop := false) {
-    tick := tick % get_song_tick_length(tracks)
+    tick := tick
+    tick = tick % get_song_tick_length(tracks)
     
     for track, i in tracks {
         index := &indices[i]

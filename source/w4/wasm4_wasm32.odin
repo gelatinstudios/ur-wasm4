@@ -131,7 +131,7 @@ Tone_Duration :: struct {
 @(private)
 foreign wasm4 {
 	@(link_name="tone")
-	internal_tone :: proc(frequency: u32, duration_in_frames: u32, volume_percent: u32, flags: u32) ---
+	internal_tone :: proc "c" (frequency: u32, duration_in_frames: u32, volume_percent: u32, flags: u32) ---
 }
 
 // Plays a sound tone.

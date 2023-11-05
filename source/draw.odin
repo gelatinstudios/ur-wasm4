@@ -4,7 +4,13 @@ package wasm4_ur
 import "w4"
 import "assets"
 
-import "core:math"
+CHAR_SIZE :: 8
+
+centered_text :: proc "contextless" (y: i32, text: string) {
+    width := len(text) * CHAR_SIZE
+    x := w4.SCREEN_SIZE / 2 - width / 2
+    w4.text(text, i32(x), i32(y))
+}
 
 player1_info_x :i32 : 1
 player2_info_x :i32 : 112
@@ -43,7 +49,7 @@ draw_piece :: proc "contextless" (id: Player_ID, x, y: i32, is_info: bool = fals
     }
 }
 
-draw_dice :: proc "contextless" (dice: [4]int, id: Player_ID, for_menu := false) {
+draw_dice :: proc "contextless" (dice: [4]int, id: Player_ID, y_pos: Maybe(i32) = nil) {
     // the way we draw the dice is by making off the corners that should be black
     Rect :: struct {
 	x, y: i32,
@@ -72,16 +78,16 @@ draw_dice :: proc "contextless" (dice: [4]int, id: Player_ID, for_menu := false)
 	x_offset := id == .One ? player1_info_x : player2_info_x
 	
 	x := x_offset + i32(i*12)
-	y := i32(45)
-
-	if for_menu {
+        y, for_menu := y_pos.(i32)
+        if for_menu {
 	    x = w4.SCREEN_SIZE/2 - 2*12 + i32(i*12)
-	    y = 70
-	}
+        } else {
+            y = 45
+        }
 	
 	assets.blit_die(x, y)
 	
-	mask := mask_permutations[die]
+	//mask := mask_permutations[die]
 
 	for rect_index in mask_permutations[die] {
 	    rect := mask_rects[rect_index]
@@ -133,35 +139,38 @@ draw_board :: proc "contextless" (game: Game_State) {
 	x := i32(board_x + column*20)
 	y := i32(row*20)
 
+        // TODO:
+        // all of the DRAW_COLORS^ = ... is to  make up for the tiles
+        // being colored differently as assets. should be fixed offline sometime
 	switch tile_sprite {
-	case 0: // do nothing
-	case 1:
-	    w4.DRAW_COLORS^ = 0x3421
-	    flags: w4.Blit_Flags = {.FLIPX} if column == 0 else nil
-	    blit_rosette(x, y, flags)
-	case 2:
-	    w4.DRAW_COLORS^ = 0x4421
-	    blit_square_circle_with_crosses(x, y)
-	case 3:
-	    w4.DRAW_COLORS^ = 0x1420
-	    flags: w4.Blit_Flags = {.ROTATE_CCW_90}
-	    if row > 2 {
-		flags += {.FLIPX}
-	    }
-	    if column != 0 {
-		flags += {.FLIPY}
-	    }
-	    blit_eyes_crosses(x, y, flags)
-	case 4:
-	    w4.DRAW_COLORS^ = 0x4221
-	    blit_circles_with_eyes(x, y)
-	case 5:
-	    w4.DRAW_COLORS^ = 0x1423
-	    blit_zig_zaggy_circles(x, y)
+	    case 0: // do nothing
+	    case 1:
+	        w4.DRAW_COLORS^ = 0x3421
+	        flags: w4.Blit_Flags = {.FLIPX} if column == 0 else nil
+	        blit_rosette(x, y, flags)
+	    case 2:
+	        w4.DRAW_COLORS^ = 0x4421
+	        blit_square_circle_with_crosses(x, y)
+	    case 3:
+	        w4.DRAW_COLORS^ = 0x1420
+	        flags: w4.Blit_Flags = {.ROTATE_CCW_90}
+	        if row > 2 {
+		    flags += {.FLIPX}
+	        }
+	        if column != 0 {
+		    flags += {.FLIPY}
+	        }
+	        blit_eyes_crosses(x, y, flags)
+	    case 4:
+	        w4.DRAW_COLORS^ = 0x4221
+	        blit_circles_with_eyes(x, y)
+	    case 5:
+	        w4.DRAW_COLORS^ = 0x1423
+	        blit_zig_zaggy_circles(x, y)
 
-	case 6:
-	    w4.DRAW_COLORS^ = 0x1421
-	    blit_last_peace(x, y)
+	    case 6:
+	        w4.DRAW_COLORS^ = 0x1421
+	        blit_last_peace(x, y)
 	}
 
 	draw_piece_if_on_tile :: proc "contextless" (game: Game_State, board_index: int,
@@ -262,9 +271,8 @@ get_info_piece_positions :: proc "contextless" (game: Game_State, id: Player_ID)
     for piece_count, i in piece_counts {
 	x_offset := id == .One ? player1_info_x : player2_info_x
 	y_offset := y_offsets[i]
-	for i in 0 ..< piece_count {
-	    pos := info_pieces_offsets[i]
-
+	for pos in info_pieces_offsets[:piece_count] {
+            pos := pos
 	    pos.x += x_offset + 2
 	    pos.y += y_offset
 
@@ -301,118 +309,142 @@ draw_game :: proc "contextless" (game: ^Game_State) {
     }
 
     switch state {
-    case .Menu: fallthrough
-    case .Menu_Rolling:
-	
-	w4.DRAW_COLORS^ = 0x12
-	w4.text("The Royal Game of Ur", 0, 20)
-	w4.text("Press X to Start", 15, 50)
-	draw_dice(game.dice, active_player, true)
+        case .Menu: fallthrough
+        case .Menu_Rolling:
+	    w4.DRAW_COLORS^ = 0x12
+            
+            y := i32(10)
+            
+	    centered_text(y, "The Royal Game of Ur")
+            y += 20
+            
+	    centered_text(y, "Press X to Start")
+            y += 20
+            
+	    draw_dice(game.dice, active_player, y)
+            y += 20
 
-	for i in 0..<7 {
-	    id := Player_ID(i % 2)
-	    draw_piece(id, 5 + i32(i*22), 90)
-	}
-	for i in 0..<7 {
-	    id := Player_ID(int(!bool(i % 2)))
-	    draw_piece(id, 5 + i32(i*22), 120)
-	}
-
-    case .Roll_Prompt:
-	draw_player_text("ROLL", active_player, 60)
-	draw_player_text("HIT X", active_player, 70)
-	draw_dice(game.dice, active_player)
-	
-    case .Rolling:
-	draw_roll(game.roll, active_player)
-	draw_dice(game.dice, active_player)
-
-    case .Move_Prompt:
-	draw_roll(game.roll, active_player)
-	draw_dice(game.dice, active_player)
-	draw_player_text(" MOVE", active_player, 70)
-
-	x, y := get_tile_pos(game^, active_player, game.selected_tile)
-
-	if active_player == .One {
-	    w4.DRAW_COLORS^ = 0x20
-	} else {
-	    w4.DRAW_COLORS^ = 0x20
-	}
-	w4.oval(x+1, y+1, 18, 18)
-	w4.oval(x, y, 20, 20)
-
-	oscillation_length :: 10
-	n := game.frame_count % (oscillation_length*2)
-	should_draw := n < oscillation_length
-
-	if should_draw {
-	    x, y = get_tile_pos(game^, active_player, game.selected_tile + game.roll)
-
-	    x += 1
-	    y += 1
-
-	    draw_piece(active_player, x, y)
-	}
-	
-    case .Done:
-	for y in 0..<w4.SCREEN_SIZE {
-	    for x in 0..<w4.SCREEN_SIZE {
-		index := u32(x + y*w4.SCREEN_SIZE)
-		if get_bit(&game.end_screen_has_sprite, index) {
-		    is_info := get_bit(&game.end_screen_is_info, index)
-		    player_id := Player_ID(get_bit(&game.end_screen_player_id, index))
-		    draw_piece(player_id, i32(x), i32(y), is_info)
-		}
+	    for i in 0..<7 {
+	        id := Player_ID(i % 2)
+	        draw_piece(id, 5 + i32(i*22), y)
 	    }
-	}
+            y += 30
 
-	frames_to_oscillate_for :: 120
+            menu_selections := [Menu_Selection]string {
+                    .One_Player_Start = "->One Player Start<-",
+                    .Two_Player_Start = "->Two Player Start<-",
+                    .How_To_Play = "->How To Play<-",
+            }
+            
+	    w4.DRAW_COLORS^ = 0x12
+            for text, selection in menu_selections {
+                text := text
+                if game.menu_selection != selection {
+                    text = text[2:len(text)-2]
+                }
+                centered_text(y, text)
+                y += 15
+            }
 
-	should_draw := true
-	if game.state_frame_count < frames_to_oscillate_for {
+        case .Tutorial:
+            
+        case .Players_Ready_Up:
+            
+        case .Roll_Prompt:
+	    draw_player_text("ROLL", active_player, 60)
+	    draw_player_text("HIT X", active_player, 70)
+	    draw_dice(game.dice, active_player)
+	    
+        case .Rolling:
+	    draw_roll(game.roll, active_player)
+	    draw_dice(game.dice, active_player)
+
+        case .Move_Prompt:
+	    draw_roll(game.roll, active_player)
+	    draw_dice(game.dice, active_player)
+	    draw_player_text(" MOVE", active_player, 70)
+
+	    x, y := get_tile_pos(game^, active_player, game.selected_tile)
+
+	    if active_player == .One {
+	        w4.DRAW_COLORS^ = 0x20
+	    } else {
+	        w4.DRAW_COLORS^ = 0x20
+	    }
+	    w4.oval(x+1, y+1, 18, 18)
+	    w4.oval(x, y, 20, 20)
+
 	    oscillation_length :: 10
-	    n := game.state_frame_count % (oscillation_length*2)
-	    should_draw = n < oscillation_length
-	}
+	    n := game.frame_count % (oscillation_length*2)
+	    should_draw := n < oscillation_length
 
-	// TODO: this is all pretty sloppily hacked together
-	//       could be cleaned up...
-	
-	if should_draw {
-	    w4.DRAW_COLORS^ = 0x21
-	    width  :u32 = 80
-	    height :u32 = 20
-	    
-	    x := i32(w4.SCREEN_SIZE/2 - width/2)
-	    y := i32(w4.SCREEN_SIZE/2 - height/2) - w4.SCREEN_SIZE/4
-	    w4.rect(x, y - 5, width, height)
+	    if should_draw {
+	        x, y = get_tile_pos(game^, active_player, game.selected_tile + game.roll)
 
-	    y += 1
-	    
-	    if game.player_that_won == .One {
-		w4.DRAW_COLORS^ = 0x3
-		w4.text(" P1 Wins!", x, y)
-	    } else {
-		w4.DRAW_COLORS^ = 0x4
-		w4.text(" P2 Wins!", x, y)
-	    }
-	}
+	        x += 1
+	        y += 1
 
-	if game.state_frame_count >= frames_to_oscillate_for {
-	    text :: "X to Restart"
-	    width :: len(text)*8 + 2
-	    
-	    w4.DRAW_COLORS^ = 0x21
-	    w4.rect(w4.SCREEN_SIZE/2 - width/2, w4.SCREEN_SIZE/2 + 10 - w4.SCREEN_SIZE/4, width, 12)
-
-	    if game.player_that_won == .One {
-		w4.DRAW_COLORS^ = 0x3
-	    } else {
-		w4.DRAW_COLORS^ = 0x4
+	        draw_piece(active_player, x, y)
 	    }
 	    
-	    w4.text(text, w4.SCREEN_SIZE/2 - width/2 +2, w4.SCREEN_SIZE/2 + 13 - w4.SCREEN_SIZE/4)
-	}
+        case .Done:
+	    for y in 0..<w4.SCREEN_SIZE {
+	        for x in 0..<w4.SCREEN_SIZE {
+		    index := u32(x + y*w4.SCREEN_SIZE)
+		    if get_bit(&game.end_screen_has_sprite, index) {
+		        is_info := get_bit(&game.end_screen_is_info, index)
+		        player_id := Player_ID(get_bit(&game.end_screen_player_id, index))
+		        draw_piece(player_id, i32(x), i32(y), is_info)
+		    }
+	        }
+	    }
+
+	    frames_to_oscillate_for :: 120
+
+	    should_draw := true
+	    if game.state_frame_count < frames_to_oscillate_for {
+	        oscillation_length :: 10
+	        n := game.state_frame_count % (oscillation_length*2)
+	        should_draw = n < oscillation_length
+	    }
+
+	    // TODO: this is all pretty sloppily hacked together
+	    //       could be cleaned up...
+	    
+	    if should_draw {
+	        w4.DRAW_COLORS^ = 0x21
+	        width  :u32 = 80
+	        height :u32 = 20
+	        
+	        x := i32(w4.SCREEN_SIZE/2 - width/2)
+	        y := i32(w4.SCREEN_SIZE/2 - height/2) - w4.SCREEN_SIZE/4
+	        w4.rect(x, y - 5, width, height)
+
+	        y += 1
+	        
+	        if game.player_that_won == .One {
+		    w4.DRAW_COLORS^ = 0x3
+		    w4.text(" P1 Wins!", x, y)
+	        } else {
+		    w4.DRAW_COLORS^ = 0x4
+		    w4.text(" P2 Wins!", x, y)
+	        }
+	    }
+
+	    if game.state_frame_count >= frames_to_oscillate_for {
+	        text :: "X to Restart"
+	        width :: len(text)*8 + 2
+	        
+	        w4.DRAW_COLORS^ = 0x21
+	        w4.rect(w4.SCREEN_SIZE/2 - width/2, w4.SCREEN_SIZE/2 + 10 - w4.SCREEN_SIZE/4, width, 12)
+
+	        if game.player_that_won == .One {
+		    w4.DRAW_COLORS^ = 0x3
+	        } else {
+		    w4.DRAW_COLORS^ = 0x4
+	        }
+	        
+	        w4.text(text, w4.SCREEN_SIZE/2 - width/2 +2, w4.SCREEN_SIZE/2 + 13 - w4.SCREEN_SIZE/4)
+	    }
     }
 }

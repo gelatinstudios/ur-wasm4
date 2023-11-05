@@ -26,37 +26,34 @@ maybe_do_roll_sound :: proc "contextless" (state_frame_count: i64, id: Player_ID
 do_sounds :: proc "contextless" (game: Game_State) {
     using assets
 
-    pad1 := w4.GAMEPAD1^
-    pad2 := w4.GAMEPAD2^
-
     active_player := game.active_player
     
-    active_pad := active_player == .One ? pad1 : pad2
-    pressed_this_frame := active_pad - game.pads_last_frame[int(active_player)]
-
     switch game.state {
-    case .Menu:
-	indices := global_audio_engine.block_indices[:]
-	params := [4]assets.Audio_Params{}
-	tick := game.state_frame_count - menu_music_frame_start
-	
-	play_Ur_Opening2(indices, params[:], tick, true)
+        case .Menu:
+	    indices := global_audio_engine.block_indices[:]
+	    params := [4]assets.Audio_Params{}
+	    tick := game.state_frame_count - menu_music_frame_start
+	    
+	    play_Ur_Opening2(indices, params[:], tick, true)
 
-    case .Roll_Prompt: // do nothing
-	
-    case .Menu_Rolling:
-	maybe_do_roll_sound(game.state_frame_count, active_player, true)
-	
-    case .Rolling:
-	maybe_do_roll_sound(game.state_frame_count, active_player)
-	
-    case .Move_Prompt:
-    case .Done:
-	indices := global_audio_engine.block_indices[:]
-	params := [4]assets.Audio_Params{}
-	play_Ur_Ending(indices, params[:], game.state_frame_count, false)
+        case .Tutorial:
+            
+        case .Players_Ready_Up: // maybe a cool sound when a player ready's up?
+            
+        case .Roll_Prompt: // do nothing
+	    
+        case .Menu_Rolling:
+	    maybe_do_roll_sound(game.state_frame_count, active_player, true)
+	    
+        case .Rolling:
+	    maybe_do_roll_sound(game.state_frame_count, active_player)
+	    
+        case .Move_Prompt:
+        case .Done:
+	    indices := global_audio_engine.block_indices[:]
+	    params := [4]assets.Audio_Params{}
+	    play_Ur_Ending(indices, params[:], game.state_frame_count, false)
     }
-
     
     if game.move_type != .No_Move {
 	start_frequency: u16
