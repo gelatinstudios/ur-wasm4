@@ -18,14 +18,15 @@ Player :: struct {
 Player_ID :: enum u8 {
     One = 0,
     Two = 1,
+    None = 2, // really only for setting player_that_moved for sound fx center-pan
 }
 
 Tile_Pieces :: distinct bit_set[Player_ID]
 
 war_region_min :: 5
 war_region_max :: 12
-
-in_war_region :: proc "contextless" (index: int) -> bool {
+ 
+in_war_region :: proc(index: int) -> bool {
     return index >= war_region_min && index <= war_region_max
 }
 
@@ -85,6 +86,7 @@ Game_State :: struct {
     roll: int,
 
     menu_selection: Menu_Selection,
+    tutorial_screen: int,
     player_1_ready, player_2_ready: bool,
     
     selected_tile: int,
@@ -100,13 +102,13 @@ Game_State :: struct {
     end_screen_is_info:    [SCREEN_BIT_ARRAY]byte,
 }
 
-get_bit :: proc "contextless" (arr: ^[SCREEN_BIT_ARRAY]byte, index: u32) -> bool {
+get_bit :: proc(arr: ^[SCREEN_BIT_ARRAY]byte, index: u32) -> bool {
     b := arr[index/8]
     b >>= index % 8
     return bool(b & 1)
 }
 
-set_bit :: proc "contextless" (arr: ^[SCREEN_BIT_ARRAY]byte, index: u32, n: bool) {
+set_bit :: proc(arr: ^[SCREEN_BIT_ARRAY]byte, index: u32, n: bool) {
     n := u8(n)
     shift := index % 8
     b := &arr[index/8]
@@ -114,7 +116,7 @@ set_bit :: proc "contextless" (arr: ^[SCREEN_BIT_ARRAY]byte, index: u32, n: bool
 }
 
 // NOTE: this is for testing the end screen only
-fake_end_game :: proc "contextless" (using game: ^Game_State) {
+fake_end_game :: proc(using game: ^Game_State) {
     switch_state(game, .Done)
     players[0].available_pieces = 0
     players[0].finished_pieces = 7
@@ -130,14 +132,14 @@ is_rosette_tab: [board_length]bool
 global_rng_state: u64
 global_game_state: Game_State
 
-get_end_screen_circle_deltas :: proc "contextless" (angle: i16) -> (f32, f32) {
+get_end_screen_circle_deltas :: proc(angle: i16) -> (f32, f32) {
     END_SCREEN_RADIUS :: 10
     using math
     
     return END_SCREEN_RADIUS*cos(angle), END_SCREEN_RADIUS*sin(angle)
 }
 
-switch_state :: proc "contextless" (game: ^Game_State, state: State) {
+switch_state :: proc(game: ^Game_State, state: State) {
     game.state = state
     game.state_frame_count = -1 // because 1 is always added to it at the end of the update function
 
@@ -146,20 +148,20 @@ switch_state :: proc "contextless" (game: ^Game_State, state: State) {
     }
 }
 
-other_player :: proc "contextless" (id: Player_ID) -> Player_ID {
+other_player :: proc(id: Player_ID) -> Player_ID {
     return Player_ID(!bool(id))
 }
 
-next_turn :: proc "contextless" (game: ^Game_State) {
+next_turn :: proc(game: ^Game_State) {
     game.active_player = other_player(game.active_player)
     switch_state(game, .Roll_Prompt)
 }
 
 pcg32_increment :: 1442695040888963407
 
-pcg32 :: proc "contextless" () -> u32 {
+pcg32 :: proc() -> u32 {
     // https://en.wikipedia.org/wiki/Permuted_congruential_generator
-    rotr32 :: proc "contextless" (x: u32, r: u64) -> u32 {
+    rotr32 :: proc(x: u32, r: u64) -> u32 {
         return x >> r | x << (-r & 31)
     }
 
@@ -170,11 +172,11 @@ pcg32 :: proc "contextless" () -> u32 {
     return rotr32(u32(x >> 27), count)
 }
 
-pcg32_init :: proc "contextless" (seed: u64) {
+pcg32_init :: proc(seed: u64) {
     global_rng_state = seed + pcg32_increment
 }
 
-roll :: proc "contextless" (game: ^Game_State) {
+roll :: proc(game: ^Game_State) {
     sum := 0
     for die in &game.dice {
         n := pcg32() % DICE_PERMUTATION_COUNT
@@ -184,7 +186,7 @@ roll :: proc "contextless" (game: ^Game_State) {
     game.roll = sum
 }
 
-has_player_piece :: proc "contextless" (game: Game_State, id: Player_ID, index: int) -> bool {
+has_player_piece :: proc(game: Game_State, id: Player_ID, index: int) -> bool {
     if index == 0 {
         return game.players[id].available_pieces > 0
     }
@@ -192,7 +194,7 @@ has_player_piece :: proc "contextless" (game: Game_State, id: Player_ID, index: 
     return id in tile
 }
 
-is_valid_selection :: proc "contextless" (game: Game_State, id: Player_ID, s: int) -> bool {
+is_valid_selection :: proc(game: Game_State, id: Player_ID, s: int) -> bool {
     if !has_player_piece(game, id, s) {
         return false
     }
@@ -210,14 +212,14 @@ is_valid_selection :: proc "contextless" (game: Game_State, id: Player_ID, s: in
     return result
 }
 
-selection_wrap :: proc "contextless" (game: Game_State, s: ^int, delta: int) {
+selection_wrap :: proc(game: Game_State, s: ^int, delta: int) {
     mod := len(game.board)
     s^ += delta
     s^ += (1 - s^ / mod) * mod
     s^ %= mod
 }
 
-find_valid_selection :: proc "contextless" (game: Game_State, id: Player_ID) -> (int, bool) {
+find_valid_selection :: proc(game: Game_State, id: Player_ID) -> (int, bool) {
     for i in 0 ..< len(game.board) {
         if is_valid_selection(game, id, i) {
             return i, true
@@ -226,7 +228,7 @@ find_valid_selection :: proc "contextless" (game: Game_State, id: Player_ID) -> 
     return ---, false
 }
 
-next_valid_selection :: proc "contextless" (game: ^Game_State, id: Player_ID, delta: int) {
+next_valid_selection :: proc(game: ^Game_State, id: Player_ID, delta: int) {
     s := game.selected_tile
 
     selection_wrap(game^, &s, delta)
@@ -239,6 +241,8 @@ next_valid_selection :: proc "contextless" (game: ^Game_State, id: Player_ID, de
 
 @export
 start :: proc "c" () {
+    context = {}
+    
     w4.PALETTE[0] = 0xE0D9BA
     w4.PALETTE[1] = 0x221100
     w4.PALETTE[2] = 0xFD4102
@@ -251,7 +255,7 @@ start :: proc "c" () {
     reset_game(&global_game_state)
 }
 
-reset_game :: proc "contextless" (game: ^Game_State) {
+reset_game :: proc(game: ^Game_State) {
     game^ = {}
 
     switch_state(game, .Menu)
@@ -270,13 +274,14 @@ reset_game :: proc "contextless" (game: ^Game_State) {
     global_rng_state = {}
 }
 
-initialize_end_screen :: proc "contextless" (game: ^Game_State) {
+initialize_end_screen :: proc(game: ^Game_State) {
     using game
 
     player_that_won = active_player
     
-    init_end_screen_sprite :: proc "contextless" (sprite: ^End_Screen_Sprite,
-						  x, y: i16, id: Player_ID, is_info: b8) {
+    init_end_screen_sprite :: proc(sprite: ^End_Screen_Sprite,
+				   x, y: i16, id: Player_ID, is_info: b8)
+    {
 	angle := pcg32() % 360
 	x := x
 	y := y
@@ -328,7 +333,7 @@ initialize_end_screen :: proc "contextless" (game: ^Game_State) {
 	}
     }
 
-    fisher_yattes_shuffle :: proc "contextless" (sprites: []End_Screen_Sprite) {
+    fisher_yattes_shuffle :: proc(sprites: []End_Screen_Sprite) {
 	n := len(sprites)
 	for i := n-1; i >= 1; i -= 1 {
 	    j := uint(pcg32()) % uint(i)
@@ -341,16 +346,16 @@ initialize_end_screen :: proc "contextless" (game: ^Game_State) {
     fisher_yattes_shuffle(game.end_screen_sprites[1:])
 }
 
-update_game :: proc "contextless" (game: ^Game_State) {
+update_game :: proc(game: ^Game_State) {
     game := game
     state := game.state
     active_player := game.active_player
     
     pad1 := w4.GAMEPAD1^
     pad2 := w4.GAMEPAD2^
-        
+
     pad1_pressed_this_frame :=  pad1 - game.pads_last_frame[0]
-    pad2_pressed_this_frame :=  pad2 - game.pads_last_frame[0]
+    pad2_pressed_this_frame :=  pad2 - game.pads_last_frame[1]
 
     pressed_this_frame := active_player == .One ? pad1_pressed_this_frame : pad2_pressed_this_frame
     
@@ -373,7 +378,7 @@ update_game :: proc "contextless" (game: ^Game_State) {
             
             // making the dice at the beginning dance
 
-            tick_die :: proc "contextless" (die: ^int) {
+            tick_die :: proc(die: ^int) {
                 die^ = (die^ + 1) % 6
             }
 
@@ -404,26 +409,47 @@ update_game :: proc "contextless" (game: ^Game_State) {
                     die = (int(game.frame_count) / 60 + i) % 6
                 }
             }
-            
+
+            prev_selection := game.menu_selection
             game.menu_selection += Menu_Selection(.DOWN in pressed_this_frame)
             game.menu_selection -= Menu_Selection(.UP in pressed_this_frame)
             game.menu_selection = clamp(game.menu_selection, min(Menu_Selection), max(Menu_Selection))
-            
+            if prev_selection != game.menu_selection {
+                game.move_type = .Normal
+                game.player_that_moved = .None
+            }
+
 	    if .A in pressed_this_frame do switch game.menu_selection {
                 case .One_Player_Start:
                     game.player_2_is_ai = true
                     switch_state(game, .Menu_Rolling)
                     pcg32_init(game.frame_count)
-
+                
                 case .Two_Player_Start:
                     switch_state(game, .Players_Ready_Up)
+                    game.move_type = .Rosette
+                    game.player_that_moved = .None
 
                 case .How_To_Play:
+                    game.tutorial_screen = 0
                     switch_state(game, .Tutorial)
+                    game.move_type = .Rosette
+                    game.player_that_moved = .None
+
             }
 
         case .Tutorial:
-            
+            if .A in pressed_this_frame {
+                game.tutorial_screen += 1
+                if game.tutorial_screen >= TUTORIAL_SCREEN_COUNT {
+                    switch_state(game, .Menu)
+                    game.move_type = .Rosette
+                } else {
+                    game.move_type = .Normal
+                }
+
+                game.player_that_moved = .None
+            }
             
         case .Players_Ready_Up:
             if .A in pad1_pressed_this_frame {
@@ -469,14 +495,14 @@ update_game :: proc "contextless" (game: ^Game_State) {
 
         case .Move_Prompt:
             if is_ai_turn { // here is the AI
-                Heuristic :: proc "contextless" (game: Game_State, selection: int) -> bool
+                Heuristic :: proc(game: Game_State, selection: int) -> bool
                 heuristics := [?]Heuristic {
-                    proc "contextless" (game: Game_State, to: int) -> bool { return is_rosette_tab[to] },
-                    proc "contextless" (game: Game_State, to: int) -> bool { return in_war_region(to) && other_player(game.active_player) in game.board[to] },
-                    proc "contextless" (game: Game_State, to: int) -> bool { return !in_war_region(to) },
+                    proc(game: Game_State, to: int) -> bool { return is_rosette_tab[to] },
+                    proc(game: Game_State, to: int) -> bool { return in_war_region(to) && other_player(game.active_player) in game.board[to] },
+                    proc(game: Game_State, to: int) -> bool { return !in_war_region(to) },
                 }
 
-                selection := -1 // using a Maybe(int) here added 4KB of code so i'm just doing this
+                selection: Maybe(int)
                 heuristic_loop: for heuristic in heuristics {
                     for i := len(game.board)-1; i >= 0; i -= 1 {
                         if !is_valid_selection(game^, active_player, i) do continue
@@ -487,8 +513,8 @@ update_game :: proc "contextless" (game: ^Game_State) {
                     }
                 }
                 
-                if selection != -1 {
-                    game.selected_tile = selection
+                if selection != nil {
+                    game.selected_tile, _ = selection.(int)
                 } else {
                     for _ in 0 ..< pcg32() % 10 {
                         next_valid_selection(game, active_player, 1)
@@ -545,6 +571,8 @@ update_game :: proc "contextless" (game: ^Game_State) {
             }
             
         case .Done:
+            if game.player_2_is_ai do game.active_player = .One
+                
 	    if game.state_frame_count == 0 {
 	        initialize_end_screen(game)
 	    } else {
@@ -580,6 +608,8 @@ update_game :: proc "contextless" (game: ^Game_State) {
 
 @export
 update :: proc "c" () {
+    context = {}
+    
     game := &global_game_state
     
     update_game(game)

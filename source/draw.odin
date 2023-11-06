@@ -1,23 +1,26 @@
 
 package wasm4_ur
 
+import "core:strings"
+
 import "w4"
 import "assets"
 
 CHAR_SIZE :: 8
 
-centered_text :: proc "contextless" (y: i32, text: string) {
+centered_text :: proc(y: i32, text: string, x_offset := 0) {
     width := len(text) * CHAR_SIZE
-    x := w4.SCREEN_SIZE / 2 - width / 2
+    x := x_offset + ((w4.SCREEN_SIZE - x_offset) / 2) - width / 2
     w4.text(text, i32(x), i32(y))
 }
 
 player1_info_x :i32 : 1
 player2_info_x :i32 : 112
 
-board_x :: 50
+board_x :: i32(50)
+board_width :: 3*20 + 2
 
-get_tile_pos :: proc "contextless" (game: Game_State, id: Player_ID, index: int) -> (i32, i32) {
+get_tile_pos :: proc(game: Game_State, id: Player_ID, index: int) -> (i32, i32) {
     tile_tab := [?][2]i32 {
 	{0, 4}, {0, 3}, {0, 2}, {0, 1}, {0, 0}, {1, 0}, {1, 1}, {1, 2},
 	{1, 3}, {1, 4}, {1, 5}, {1, 6}, {1, 7}, {0, 7}, {0, 6}, {0, 5},
@@ -35,7 +38,7 @@ get_tile_pos :: proc "contextless" (game: Game_State, id: Player_ID, index: int)
     return pos.x, pos.y
 }
 
-draw_piece :: proc "contextless" (id: Player_ID, x, y: i32, is_info: bool = false) {
+draw_piece :: proc(id: Player_ID, x, y: i32, is_info: bool = false) {
     if id == .One {
 	w4.DRAW_COLORS^ = 0x0230
     } else {
@@ -49,7 +52,7 @@ draw_piece :: proc "contextless" (id: Player_ID, x, y: i32, is_info: bool = fals
     }
 }
 
-draw_dice :: proc "contextless" (dice: [4]int, id: Player_ID, y_pos: Maybe(i32) = nil) {
+draw_dice :: proc(dice: [4]int, id: Player_ID, y_pos: Maybe(i32) = nil) {
     // the way we draw the dice is by making off the corners that should be black
     Rect :: struct {
 	x, y: i32,
@@ -97,8 +100,59 @@ draw_dice :: proc "contextless" (dice: [4]int, id: Player_ID, y_pos: Maybe(i32) 
     }
 }
 
+screen_texts := [?]string {
+    "Ur is a board game from ancient Mesopotamia",
+    "It's at least 4000 years old",
+    "Ur is a racing game"
+    "So the object of the game is to be the first to get your pieces from start to finish"
+}
+
+TUTORIAL_SCREEN_COUNT :: len(screen_texts)
+
+draw_tutorial :: proc(game: Game_State) {
+    using strings
+
+    offset :: 3
+    draw_board(game, offset)
+    text_offset :: (offset + board_width)
+
+    w4.DRAW_COLORS^ = 0x12
+
+    y := i32(10)
+    text := screen_texts[game.tutorial_screen] 
+
+    max_length :: (w4.SCREEN_SIZE - text_offset) / CHAR_SIZE
+    
+    for len(text) > 0 {
+        buffer: [256]u8
+        builder := builder_from_bytes(buffer[:])
+
+        write_string(&builder, fields_iterator(&text) or_else "")
+
+        prev_text := text
+        for word in fields_iterator(&text) {
+            if builder_len(builder) + len(word) + 1 >= max_length {
+                text = prev_text
+                break
+            }
+
+            write_byte(&builder, ' ')
+            write_string(&builder, word)
+
+            prev_text = text
+        }
+
+        centered_text(y, to_string(builder), text_offset)
+        
+        y += 10
+    }
+
+    w4.DRAW_COLORS^ = 0x14
+    centered_text(w4.SCREEN_SIZE - 10, "Press X", text_offset)
+}
+    
 // also draws pieces on board
-draw_board :: proc "contextless" (game: Game_State) {
+draw_board :: proc(game: Game_State, board_x := board_x) {
     board_layout :: [?]int {
 	1, 2, 1,
 	3, 4, 3,
@@ -124,9 +178,9 @@ draw_board :: proc "contextless" (game: Game_State) {
     // this really needs to be done first!
     // board outline
     w4.DRAW_COLORS^ = 0x20
-    w4.rect(   50-1,      0, 3*20+2, 4*20+1)
-    w4.rect(50+20-1,   4*20,   20+2, 2*20+2)
-    w4.rect(   50-1, 6*20-1, 3*20+2, 2*20+2)
+    w4.rect(   board_x-1,      0, board_width, 4*20+1)
+    w4.rect(board_x+20-1,   4*20,   20+2, 2*20+2)
+    w4.rect(   board_x-1, 6*20-1, board_width, 2*20+2)
 
     for tile_sprite, i in board_layout {
 	using assets
@@ -136,7 +190,7 @@ draw_board :: proc "contextless" (game: Game_State) {
 	column := i%3
 	row    := i/3
 	
-	x := i32(board_x + column*20)
+	x := board_x + i32(column*20)
 	y := i32(row*20)
 
         // TODO:
@@ -173,7 +227,7 @@ draw_board :: proc "contextless" (game: Game_State) {
 	        blit_last_peace(x, y)
 	}
 
-	draw_piece_if_on_tile :: proc "contextless" (game: Game_State, board_index: int,
+	draw_piece_if_on_tile :: proc(game: Game_State, board_index: int,
 						     id: Player_ID, pieces: Tile_Pieces, x, y: i32)
 	{
 	    is_selected_piece :=
@@ -211,19 +265,19 @@ draw_board :: proc "contextless" (game: Game_State) {
     }
 }
 
-draw_digit :: proc "contextless" (digit: int, x, y: i32) {
+draw_digit :: proc(digit: int, x, y: i32) {
     buffer: [1]u8
     buffer[0] = byte(digit) + '0'
     w4.text(string(buffer[:]), x, y)
 }
 
-draw_player_digit :: proc "contextless" (digit: int, id: Player_ID, y: i32, x_offset: i32 = 0) {
+draw_player_digit :: proc(digit: int, id: Player_ID, y: i32, x_offset: i32 = 0) {
     buffer: [1]u8
     buffer[0] = byte(digit) + '0'
     draw_player_text(string(buffer[:]), id, y, x_offset)
 }
 
-draw_player_text :: proc "contextless" (text: string, id: Player_ID, y: i32, x_offset: i32 = 0) {
+draw_player_text :: proc(text: string, id: Player_ID, y: i32, x_offset: i32 = 0) {
     x: i32
 
     if id == .One {
@@ -239,7 +293,7 @@ draw_player_text :: proc "contextless" (text: string, id: Player_ID, y: i32, x_o
     w4.text(text, x, y)
 }
 
-get_info_piece_positions :: proc "contextless" (game: Game_State, id: Player_ID) -> [][2]i32 {
+get_info_piece_positions :: proc(game: Game_State, id: Player_ID) -> [][2]i32 {
     @static positions: [7][2]i32
     player_index := int(id)
     using player := game.players[player_index]
@@ -284,7 +338,7 @@ get_info_piece_positions :: proc "contextless" (game: Game_State, id: Player_ID)
     return positions[:index]
 }
 
-draw_game :: proc "contextless" (game: ^Game_State) {
+draw_game :: proc(game: ^Game_State) {
     state := game.state
     active_player := game.active_player
     
@@ -303,13 +357,14 @@ draw_game :: proc "contextless" (game: ^Game_State) {
 	}
     }
 
-    draw_roll :: proc "contextless" (roll: int, active_player: Player_ID) {
+    draw_roll :: proc(roll: int, active_player: Player_ID) {
 	draw_player_text("ROLL:", active_player, 60)
 	draw_player_digit(roll, active_player, 60, 40)
     }
 
     switch state {
         case .Menu: fallthrough
+        case .Players_Ready_Up: fallthrough
         case .Menu_Rolling:
 	    w4.DRAW_COLORS^ = 0x12
             
@@ -331,24 +386,45 @@ draw_game :: proc "contextless" (game: ^Game_State) {
             y += 30
 
             menu_selections := [Menu_Selection]string {
-                    .One_Player_Start = "->One Player Start<-",
-                    .Two_Player_Start = "->Two Player Start<-",
-                    .How_To_Play = "->How To Play<-",
-            }
-            
-	    w4.DRAW_COLORS^ = 0x12
-            for text, selection in menu_selections {
-                text := text
-                if game.menu_selection != selection {
-                    text = text[2:len(text)-2]
-                }
-                centered_text(y, text)
-                y += 15
+                    .One_Player_Start = "One Player Start",
+                    .Two_Player_Start = "Two Player Start",
+                    .How_To_Play = "How To Play",
             }
 
-        case .Tutorial:
+            if state == .Menu || game.player_2_is_ai {
+	        w4.DRAW_COLORS^ = 0x12
+                for text, selection in menu_selections {
+                    text := text
+                    if game.menu_selection == selection {
+                        w4.DRAW_COLORS^ = 0x14
+                    } else {
+                        w4.DRAW_COLORS^ = 0x12
+                    }
+                    centered_text(y, text)
+                    y += 15
+                }
+            } else {
+                if game.player_1_ready {
+                    draw_player_text(" P1",   .One, 120, 6)
+                    draw_player_text("READY", .One, 130, 2)
+                } else {
+                    draw_player_text(" P1",   .One, 120, 6)
+                    draw_player_text("NOT",   .One, 130, 10)
+                    draw_player_text("READY", .One, 140, 2)
+                }
+                
+                if game.player_2_ready {
+                    draw_player_text(" P2",   .Two, 120, 6)
+                    draw_player_text("READY", .Two, 130, 2)
+                } else {
+                    draw_player_text(" P2",   .Two, 120, 6)
+                    draw_player_text("NOT",   .Two, 130, 10)
+                    draw_player_text("READY", .Two, 140, 2)
+                }
+            }
             
-        case .Players_Ready_Up:
+        case .Tutorial:
+            draw_tutorial(game^)
             
         case .Roll_Prompt:
 	    draw_player_text("ROLL", active_player, 60)

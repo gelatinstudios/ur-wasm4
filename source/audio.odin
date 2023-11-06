@@ -10,7 +10,7 @@ global_audio_engine: struct {
 
 menu_music_frame_start :: 30
 
-maybe_do_roll_sound :: proc "contextless" (state_frame_count: i64, id: Player_ID, center := false) {
+maybe_do_roll_sound :: proc(state_frame_count: i64, id: Player_ID, center := false) {
     if state_frame_count < frames_to_roll_for {
 	pan: w4.Tone_Pan
 	if center {
@@ -23,7 +23,7 @@ maybe_do_roll_sound :: proc "contextless" (state_frame_count: i64, id: Player_ID
     }
 }
 
-do_sounds :: proc "contextless" (game: Game_State) {
+do_sounds :: proc(game: Game_State) {
     using assets
 
     active_player := game.active_player
@@ -37,7 +37,7 @@ do_sounds :: proc "contextless" (game: Game_State) {
 	    play_Ur_Opening2(indices, params[:], tick, true)
 
         case .Tutorial:
-            
+                        
         case .Players_Ready_Up: // maybe a cool sound when a player ready's up?
             
         case .Roll_Prompt: // do nothing
@@ -85,8 +85,12 @@ do_sounds :: proc "contextless" (game: Game_State) {
 	channel :: w4.Tone_Channel.Pulse1
 	duty_cycle :: w4.Tone_Duty_Cycle.Eigth
 
-	pan := game.player_that_moved == .One ? w4.Tone_Pan.Left : w4.Tone_Pan.Right
-	
+        pan: w4.Tone_Pan
+        switch game.player_that_moved {
+            case .One: pan = .Left
+            case .Two: pan = .Right
+            case .None: pan = .Center
+        }
 	w4.tone_complex(start_frequency, end_frequency,
 			duration, volume_percent, channel, duty_cycle, pan)
     }
