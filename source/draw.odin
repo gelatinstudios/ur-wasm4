@@ -53,7 +53,7 @@ draw_piece :: proc(id: Player_ID, x, y: i32, is_info: bool = false) {
 }
 
 draw_dice :: proc(dice: [4]int, id: Player_ID, y_pos: Maybe(i32) = nil) {
-    // the way we draw the dice is by making off the corners that should be black
+    // the way we draw the dice is by masking off the corners that should be black
     Rect :: struct {
 	x, y: i32,
 	w, h: u32,
