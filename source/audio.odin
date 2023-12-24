@@ -24,42 +24,40 @@ maybe_do_roll_sound :: proc(state_frame_count: i64, id: Player_ID, center := fal
 }
 
 do_sounds :: proc(game: Game_State) {
-    using assets
-
     active_player := game.active_player
-    
+
     switch game.state {
         case .Menu:
 	    indices := global_audio_engine.block_indices[:]
 	    params := [4]assets.Audio_Params{}
 	    tick := game.state_frame_count - menu_music_frame_start
-	    
-	    play_Ur_Opening2(indices, params[:], tick, true)
+
+	    assets.play_Ur_Opening2(indices, params[:], tick, true)
 
         case .Tutorial:
-                        
+
         case .Players_Ready_Up: // maybe a cool sound when a player ready's up?
-            
+
         case .Roll_Prompt: // do nothing
-	    
+
         case .Menu_Rolling:
 	    maybe_do_roll_sound(game.state_frame_count, active_player, true)
-	    
+
         case .Rolling:
 	    maybe_do_roll_sound(game.state_frame_count, active_player)
-	    
+
         case .Move_Prompt:
         case .Done:
 	    indices := global_audio_engine.block_indices[:]
 	    params := [4]assets.Audio_Params{}
-	    play_Ur_Ending(indices, params[:], game.state_frame_count, false)
+	    assets.play_Ur_Ending(indices, params[:], game.state_frame_count, false)
     }
-    
-    if game.move_type != .No_Move {
+
+    if game.sfx.kind != .No_Move {
 	start_frequency: u16
 	end_frequency: u16
 
-	switch game.move_type {
+	switch game.sfx.kind {
 	case .No_Move: // <-- this should never happen
 	    
 	case .Normal:
@@ -80,18 +78,12 @@ do_sounds :: proc(game: Game_State) {
 	}
 
 	duration := w4.Tone_Duration { sustain = 4 }
-	
+
 	volume_percent :: 50
 	channel :: w4.Tone_Channel.Pulse1
 	duty_cycle :: w4.Tone_Duty_Cycle.Eigth
 
-        pan: w4.Tone_Pan
-        switch game.player_that_moved {
-            case .One: pan = .Left
-            case .Two: pan = .Right
-            case .None: pan = .Center
-        }
 	w4.tone_complex(start_frequency, end_frequency,
-			duration, volume_percent, channel, duty_cycle, pan)
+			duration, volume_percent, channel, duty_cycle, game.sfx.pan)
     }
 }

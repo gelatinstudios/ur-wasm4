@@ -1,5 +1,8 @@
 package wasm4_ur
 
+import "core:mem"
+import "core:runtime"
+
 import "w4"
 import "assets"
 import "math"
@@ -10,9 +13,11 @@ total_rolling_frames :: frames_to_roll_for + frames_to_pause_after_roll_for
 
 board_length :: 16
 
+TEST_END :: false
+
 Player :: struct {
-    available_pieces: int,
-    finished_pieces: int,
+    available_pieces: u8,
+    finished_pieces: u8,
 }
 
 Player_ID :: enum u8 {
@@ -21,7 +26,11 @@ Player_ID :: enum u8 {
     None = 2, // really only for setting player_that_moved for sound fx center-pan
 }
 
-Tile_Pieces :: distinct bit_set[Player_ID]
+player_ids := [?]Player_ID { .One, .Two }
+
+Player_Set :: bit_set[Player_ID]
+Tile_Pieces :: distinct Player_Set
+AIs :: distinct Player_Set
 
 war_region_min :: 5
 war_region_max :: 12
@@ -43,7 +52,7 @@ State :: enum {
 
 DICE_PERMUTATION_COUNT :: 6
 
-Move_Type :: enum {
+SFX_Kind :: enum {
     No_Move = 0,
     Normal,
     Rosette,
@@ -54,7 +63,7 @@ Move_Type :: enum {
 End_Screen_Sprite :: struct #packed {
     x, y: i16,
     player: Player_ID,
-    dx, dy: i16,
+    dx, dy: i8,
     angle: i16,
     angle_delta: i16,
     is_info: b8,
@@ -63,9 +72,15 @@ End_Screen_Sprite :: struct #packed {
 SCREEN_BIT_ARRAY :: w4.SCREEN_SIZE*w4.SCREEN_SIZE/8
 
 Menu_Selection :: enum {
-    One_Player_Start,
-    Two_Player_Start,
+    Start,
+    Player_One_AI_Checkbox,
+    Player_Two_AI_Checkbox,
     How_To_Play,
+}
+
+SFX :: struct {
+    kind: SFX_Kind,
+    pan: w4.Tone_Pan,
 }
 
 Game_State :: struct {
@@ -80,7 +95,7 @@ Game_State :: struct {
     players: [2]Player,
     active_player: Player_ID,
 
-    player_2_is_ai: bool,
+    ais: AIs,
     
     dice: [4]int,
     roll: int,
@@ -90,16 +105,21 @@ Game_State :: struct {
     player_1_ready, player_2_ready: bool,
     
     selected_tile: int,
-    move_type: Move_Type,
-    player_that_moved: Player_ID,
+    
+    sfx: SFX,
 
     player_that_won: Player_ID,
-    end_screen_sprites: [14]End_Screen_Sprite
+    end_screen_sprites: [14]End_Screen_Sprite,
 
     // 160*160 bit arrays
     end_screen_has_sprite: [SCREEN_BIT_ARRAY]byte,
     end_screen_player_id:  [SCREEN_BIT_ARRAY]byte,
     end_screen_is_info:    [SCREEN_BIT_ARRAY]byte,
+}
+
+toggle_ai :: proc(ais: ^AIs, id: Player_ID) {
+    if id in ais^ do ais^ -= {id}
+    else          do ais^ += {id}
 }
 
 get_bit :: proc(arr: ^[SCREEN_BIT_ARRAY]byte, index: u32) -> bool {
@@ -133,10 +153,8 @@ global_rng_state: u64
 global_game_state: Game_State
 
 get_end_screen_circle_deltas :: proc(angle: i16) -> (f32, f32) {
-    END_SCREEN_RADIUS :: 10
-    using math
-    
-    return END_SCREEN_RADIUS*cos(angle), END_SCREEN_RADIUS*sin(angle)
+    r :: 10
+    return r*math.cos(angle), r*math.sin(angle)
 }
 
 switch_state :: proc(game: ^Game_State, state: State) {
@@ -225,7 +243,7 @@ find_valid_selection :: proc(game: Game_State, id: Player_ID) -> (int, bool) {
             return i, true
         }
     }
-    return ---, false
+    return 0, false
 }
 
 next_valid_selection :: proc(game: ^Game_State, id: Player_ID, delta: int) {
@@ -274,9 +292,7 @@ reset_game :: proc(game: ^Game_State) {
     global_rng_state = {}
 }
 
-initialize_end_screen :: proc(game: ^Game_State) {
-    using game
-
+initialize_end_screen :: proc(using game: ^Game_State) {
     player_that_won = active_player
     
     init_end_screen_sprite :: proc(sprite: ^End_Screen_Sprite,
@@ -286,8 +302,6 @@ initialize_end_screen :: proc(game: ^Game_State) {
 	x := x
 	y := y
 	
-	using math
-
 	if x < w4.SCREEN_SIZE/2 {
 	    sprite.dx = 1
 	} else {
@@ -325,6 +339,7 @@ initialize_end_screen :: proc(game: ^Game_State) {
 		init_end_screen_sprite(sprite, i16(x), i16(y), id, false)
 	    }
 	}
+        
 	for pos in get_info_piece_positions(game^, id) {
 	    sprite := &game.end_screen_sprites[end_screen_sprite_index]
 	    end_screen_sprite_index += 1
@@ -347,9 +362,10 @@ initialize_end_screen :: proc(game: ^Game_State) {
 }
 
 update_game :: proc(game: ^Game_State) {
-    game := game
     state := game.state
     active_player := game.active_player
+    
+    is_ai_turn := active_player in game.ais
     
     pad1 := w4.GAMEPAD1^
     pad2 := w4.GAMEPAD2^
@@ -358,15 +374,19 @@ update_game :: proc(game: ^Game_State) {
     pad2_pressed_this_frame :=  pad2 - game.pads_last_frame[1]
 
     pressed_this_frame := active_player == .One ? pad1_pressed_this_frame : pad2_pressed_this_frame
-    
-    game.move_type = .No_Move
-
-    is_ai_turn := game.player_2_is_ai && active_player == .Two
-    
-    if is_ai_turn {
-        pressed_this_frame = {}
+    if game.state < .Roll_Prompt || game.state == .Done {
+        pressed_this_frame = pad1_pressed_this_frame + pad2_pressed_this_frame
+    } else {
+        if is_ai_turn {
+            pressed_this_frame = {}
+        } else if card(game.ais) == 1 {
+            // correcting for player one playing as player 2
+            pressed_this_frame = pad1_pressed_this_frame
+        }
     }
 
+    game.sfx =  {}
+    
     player_id := active_player
     player := &game.players[player_id]
     enemy_id := other_player(player_id)
@@ -374,39 +394,40 @@ update_game :: proc(game: ^Game_State) {
     
     switch state {
         case .Menu:
-            using assets
+            pressed_this_frame = pad1_pressed_this_frame // only player one can use the menu
             
             // making the dice at the beginning dance
+            {
+                tick_die :: proc(die: ^int) {
+                    die^ = (die^ + 1) % 6
+                }
 
-            tick_die :: proc(die: ^int) {
-                die^ = (die^ + 1) % 6
-            }
-
-            // it's dumb that i have to declare this but whatever
-            tracks := [?][]Audio_Block {
-                Ur_Opening2_Pulse1[:],
-                Ur_Opening2_Pulse2[:],
-                Ur_Opening2_Triangle[:],
-                Ur_Opening2_Noise[:],
-            }
-            song_is_playing := false
-            for track, i in tracks {
-                index := global_audio_engine.block_indices[i]
-                
-                if index < len(track) {
-                    song_is_playing = true
-                    block := track[index]
-                    tick := game.state_frame_count - menu_music_frame_start
-                    tick %= get_song_tick_length(tracks[:])
-                    if tick == i64(block.start_frame) {
-                        die_index_tab := [?]int{0, 3, 1, 2}
-                        tick_die(&game.dice[die_index_tab[i]])
+                // it's dumb that i have to declare this but whatever
+                tracks := [?][]assets.Audio_Block {
+                    assets.Ur_Opening2_Pulse1[:],
+                    assets.Ur_Opening2_Pulse2[:],
+                    assets.Ur_Opening2_Triangle[:],
+                    assets.Ur_Opening2_Noise[:],
+                }
+                song_is_playing := false
+                for track, i in tracks {
+                    index := global_audio_engine.block_indices[i]
+                    
+                    if index < len(track) {
+                        song_is_playing = true
+                        block := track[index]
+                        tick := game.state_frame_count - menu_music_frame_start
+                        tick %= assets.get_song_tick_length(tracks[:])
+                        if tick == i64(block.start_frame) {
+                            die_index_tab := [?]int{0, 3, 1, 2}
+                            tick_die(&game.dice[die_index_tab[i]])
+                        }
                     }
                 }
-            }
-            if !song_is_playing {
-                for die, i in &game.dice {
-                    die = (int(game.frame_count) / 60 + i) % 6
+                if !song_is_playing {
+                    for die, i in &game.dice {
+                        die = (int(game.frame_count) / 60 + i) % 6
+                    }
                 }
             }
 
@@ -415,27 +436,36 @@ update_game :: proc(game: ^Game_State) {
             game.menu_selection -= Menu_Selection(.UP in pressed_this_frame)
             game.menu_selection = clamp(game.menu_selection, min(Menu_Selection), max(Menu_Selection))
             if prev_selection != game.menu_selection {
-                game.move_type = .Normal
-                game.player_that_moved = .None
+                game.sfx = {.Normal, .Center}
             }
 
 	    if .A in pressed_this_frame do switch game.menu_selection {
-                case .One_Player_Start:
-                    game.player_2_is_ai = true
-                    switch_state(game, .Menu_Rolling)
-                    pcg32_init(game.frame_count)
+                case .Player_One_AI_Checkbox: {
+                    toggle_ai(&game.ais, .One)
+                    game.sfx = {.Rosette, .Center}
+                }
                 
-                case .Two_Player_Start:
-                    switch_state(game, .Players_Ready_Up)
-                    game.move_type = .Rosette
-                    game.player_that_moved = .None
+                case .Player_Two_AI_Checkbox: {
+                    toggle_ai(&game.ais, .Two)
+                    game.sfx = {.Rosette, .Center}
+                }
+
+                case .Start:
+                    if card(game.ais) > 0 {
+                        switch_state(game, .Menu_Rolling)
+                        pcg32_init(game.frame_count)
+                    } else {
+                        switch_state(game, .Players_Ready_Up)
+                        game.sfx = {.Rosette, .Center}
+                    }
+                    when TEST_END {
+                        fake_end_game(game)
+                    }
 
                 case .How_To_Play:
                     game.tutorial_screen = 0
                     switch_state(game, .Tutorial)
-                    game.move_type = .Rosette
-                    game.player_that_moved = .None
-
+                    game.sfx = {.Rosette, .Center}
             }
 
         case .Tutorial:
@@ -443,20 +473,41 @@ update_game :: proc(game: ^Game_State) {
                 game.tutorial_screen += 1
                 if game.tutorial_screen >= TUTORIAL_SCREEN_COUNT {
                     switch_state(game, .Menu)
-                    game.move_type = .Rosette
+                    game.sfx = {.Rosette, .Center}
                 } else {
-                    game.move_type = .Normal
+                    game.sfx = {.Normal, .Center}
                 }
-
-                game.player_that_moved = .None
+            }
+            if .B in pressed_this_frame {
+                game.tutorial_screen -= 1
+                if game.tutorial_screen < 0 {
+                    switch_state(game, .Menu)
+                }
+                game.sfx = {.Kill, .Center}
             }
             
         case .Players_Ready_Up:
+            do_a_press :: proc(game: ^Game_State, ready: ^bool) {
+                ready^ = !ready^
+                if ready^ {
+                    game.sfx.kind = .Rosette
+                } else {
+                    game.sfx.kind = .Kill
+                }
+            }
             if .A in pad1_pressed_this_frame {
-                game.player_1_ready = !game.player_1_ready
+                do_a_press(game, &game.player_1_ready)
+                game.sfx.pan = .Left
             }
             if .A in pad2_pressed_this_frame {
-                game.player_2_ready = !game.player_2_ready
+                do_a_press(game, &game.player_2_ready)
+                game.sfx.pan = .Right
+            }
+            if .B in pressed_this_frame {
+                game.player_1_ready = false
+                game.player_2_ready = false
+                switch_state(game, .Menu)
+                game.sfx = {.Kill, .Center}
             }
             if game.player_1_ready && game.player_2_ready {
                 switch_state(game, .Menu_Rolling)
@@ -485,11 +536,10 @@ update_game :: proc(game: ^Game_State) {
                 
                 switch_state(game, .Move_Prompt)
                 s, ok := find_valid_selection(game^, active_player)
-                if !ok {
-                    // TODO: tell the user there's no available moves??
-                    next_turn(game)
-                } else {
+                if ok {
                     game.selected_tile = s
+                } else {
+                    next_turn(game)
                 }
             }
 
@@ -512,7 +562,7 @@ update_game :: proc(game: ^Game_State) {
                         }
                     }
                 }
-                
+
                 if selection != nil {
                     game.selected_tile, _ = selection.(int)
                 } else {
@@ -529,41 +579,45 @@ update_game :: proc(game: ^Game_State) {
             if .DOWN in pressed_this_frame {
                 next_valid_selection(game, active_player, -1)
             }
-            
+             
             if .A in pressed_this_frame || is_ai_turn {
-                game.move_type = .Normal
+                game.sfx = {.Normal, player_id == .One ? .Left : .Right}
                                 
-                game.player_that_moved = player_id
-                
                 from := game.selected_tile
                 to := from + game.roll
 
                 from_tile := &game.board[from]
                 to_tile   := &game.board[to]
-                
+
                 from_tile^ -= {active_player}
+
+                // kill enemy
                 if in_war_region(to) && enemy_id in to_tile^ {
                     to_tile^ = nil
                     enemy.available_pieces += 1
-                    game.move_type = .Kill
+                    game.sfx.kind = .Kill
                 }
+                
                 to_tile^ += {active_player}
 
+                // force invisible ending space empty
                 game.board[board_length-1] = nil
-                
+
+                // adjust player piece counts
                 if from == 0 {
                     player.available_pieces -= 1
                 }
                 if to == board_length-1 {
-                    game.move_type = .Finish_Line
+                    game.sfx.kind = .Finish_Line
                     player.finished_pieces += 1
                 }
 
+                // end turn
                 if player.finished_pieces == 7 {
                     switch_state(game, .Done)
 		    game.player_that_won = game.active_player
                 } else if is_rosette_tab[to] {
-                    game.move_type = .Rosette
+                    game.sfx.kind = .Rosette
                     switch_state(game, .Roll_Prompt)
                 } else {
                     next_turn(game)
@@ -571,8 +625,6 @@ update_game :: proc(game: ^Game_State) {
             }
             
         case .Done:
-            if game.player_2_is_ai do game.active_player = .One
-                
 	    if game.state_frame_count == 0 {
 	        initialize_end_screen(game)
 	    } else {
@@ -591,10 +643,8 @@ update_game :: proc(game: ^Game_State) {
 		        set_bit(&game.end_screen_player_id, index, bool(sprite.player))
 		    }
 		    
-		    ANGLE_DELTA :: 1
-		    
-		    sprite.x += sprite.dx
-		    sprite.y += sprite.dy
+		    sprite.x += i16(sprite.dx)
+		    sprite.y += i16(sprite.dy)
 		    sprite.angle += sprite.angle_delta
 		    sprite.angle %= 360
 	        }
@@ -608,7 +658,13 @@ update_game :: proc(game: ^Game_State) {
 
 @export
 update :: proc "c" () {
-    context = {}
+    context = runtime.default_context()
+    
+    temp_memory: [4096]byte
+    arena: mem.Arena
+    mem.arena_init(&arena, temp_memory[:])
+    
+    context.allocator = mem.arena_allocator(&arena)
     
     game := &global_game_state
     

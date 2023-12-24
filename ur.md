@@ -13,6 +13,7 @@ Press X for everything else (roll, move, etc.)
 Z is not used.
 
 Tile sprites by Seiso
+
 Music by bakedbutterbread
 
 TODO: add an AI opponent

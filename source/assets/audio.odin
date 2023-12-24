@@ -3,10 +3,10 @@ package assets
 
 import "../w4"
 
-Audio_Block :: struct {
-    start_frequency, end_frequency: u32,
-    start_frame, length: u32,
-    volume: u32,
+Audio_Block :: struct #packed {
+    start_frequency, end_frequency: u16,
+    start_frame, length: u16,
+    volume: u8,
 }
 
 Audio_Params :: struct {
@@ -89,7 +89,7 @@ play_track :: proc "contextless" (tracks: [][]Audio_Block, indices: []int, param
                     end_freq = 0
                 }
                 
-                w4.tone_complex(start_freq, end_freq, duration, volume, channel, param.duty_cycle, param.pan)
+                w4.tone_complex(start_freq, end_freq, duration, u32(volume), channel, param.duty_cycle, param.pan)
             }
         }
     }
