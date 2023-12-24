@@ -16,10 +16,7 @@ Dice :: [4]int
 
 Layout_Row :: union {string, ^Dice, Pieces_Row, Colored_Text}
 
-Pieces_Row :: struct {
-    /* count, padding: i32, */
-    /* id: Player_ID, */
-}
+Pieces_Row :: struct {}
 
 Colored_Text :: struct {
     text: string,

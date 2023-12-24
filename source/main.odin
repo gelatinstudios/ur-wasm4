@@ -23,7 +23,6 @@ Player :: struct {
 Player_ID :: enum u8 {
     One = 0,
     Two = 1,
-    None = 2, // really only for setting player_that_moved for sound fx center-pan
 }
 
 player_ids := [?]Player_ID { .One, .Two }
@@ -386,6 +385,7 @@ update_game :: proc(game: ^Game_State) {
     }
 
     game.sfx =  {}
+    game.sfx.pan = .Center
     
     player_id := active_player
     player := &game.players[player_id]
